@@ -3,15 +3,18 @@
 <head>
   <title>{{.Title}}</title>
   <meta charset="utf-8">
-  <!-- <meta http-equiv="refresh" content="5"> -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="shortcut icon" type="image/png" href="https://kubernetes.io/images/favicon.png">
-  <link href='https://fonts.googleapis.com/css?family=Roboto:300,400,500,700|Material+Icons' rel="stylesheet">
-  <link href="https://unpkg.com/vuetify/dist/vuetify.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css?family=Material+Icons" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.min.css" rel="stylesheet">
   <style>
 	[v-cloak] {
-  		display: none;
-	}
+    display: none;
+  }
+  .v-application .v-parallax {
+    height: 100vh !important;
+  }
   </style>
 </head>
 <body>
@@ -19,14 +22,14 @@
    <v-app dark>
     <v-content>
       <section>
-        <v-parallax src="#" height="600" :class="info.color">
+        <v-parallax id="parallax-hero" :style="cuddleStyle" src="https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png">
           <v-layout
             column
             align-center
             justify-center
             class="white--text"
           >
-            <img src="https://d33wubrfki0l68.cloudfront.net/33a12d8be0bc50be4738443101616e968c7afb8f/cba76/images/scalable.png" alt="kubernetes" height="200">
+            <img :src="info.logo" height="350">
             <h1 class="white--text mb-2 display-1 text-xs-center">${ info.message }</h1>
             <div class="subheading mb-3 text-xs-center">Served by <b>${ info.hostname }</b></div>
             <v-btn
@@ -41,83 +44,25 @@
               </v-badge>
               Ping
             </v-btn>
+
+            <template>
+              <v-timeline>
+                <v-timeline-item :color="tlColor1"><h3>${ tlName1 }</h3></v-timeline-item>
+                <v-timeline-item :color="tlColor2"><h3 slot="opposite">${ tlName2 }</h3></v-timeline-item>
+              </v-timeline>
+            </template>
+
           </v-layout>
         </v-parallax>
       </section>
-      <section>
-        <v-layout
-          column
-          wrap
-          class="my-5"
-          align-center
-        >
-          <v-flex xs12 sm4 class="my-3">
-            <div class="text-xs-center">
-              <h2 class="headline">The best way to start developing</h2>
-              <span class="subheading">
-                stateless microservices with Go for Kubernetes
-              </span>
-            </div>
-          </v-flex>
-          <v-flex xs12>
-            <v-container grid-list-xl>
-              <v-layout row wrap align-center>
-                <v-flex xs12 md4>
-                  <v-card class="elevation-0 transparent">
-                    <v-card-text class="text-xs-center">
-                      <v-icon x-large class="blue--text text--lighten-2">cloud</v-icon>
-                    </v-card-text>
-                    <v-card-title primary-title class="layout justify-center">
-                      <div class="headline text-xs-center">Cloud Native</div>
-                    </v-card-title>
-                    <v-card-text>
-                      Distributed as a Helm chart. Builtin Kubernetes health checks (readiness and liveness).
-                      Graceful shutdown on interrupt signals.
-                    </v-card-text>
-                  </v-card>
-                </v-flex>
-                <v-flex xs12 md4>
-                  <v-card class="elevation-0 transparent">
-                    <v-card-text class="text-xs-center">
-                      <v-icon x-large class="blue--text text--lighten-2">graphic_eq</v-icon>
-                    </v-card-text>
-                    <v-card-title primary-title class="layout justify-center">
-                      <div class="headline">Observability</div>
-                    </v-card-title>
-                    <v-card-text>
-                      Instrumentation with Prometheus (RED method).
-                      Structured logging with zap and Fluentd.
-                      Tracing with Jaeger and Istio.
-                    </v-card-text>
-                  </v-card>
-                </v-flex>
-                <v-flex xs12 md4>
-                  <v-card class="elevation-0 transparent">
-                    <v-card-text class="text-xs-center">
-                      <v-icon x-large class="blue--text text--lighten-2">flash_on</v-icon>
-                    </v-card-text>
-                    <v-card-title primary-title class="layout justify-center">
-                      <div class="headline text-xs-center">Release automation</div>
-                    </v-card-title>
-                    <v-card-text>
-                      Multi-platform Docker image AMD64 and ARMv7.
-                      CI/CD powered by: TravisCI CircleCI Quay.io Google Cloud Container Builder Skaffold Weave Flux.
-                    </v-card-text>
-                  </v-card>
-                </v-flex>
-              </v-layout>
-            </v-container>
-          </v-flex>
-        </v-layout>
-      </section>
-
       <v-footer class="blue darken-2">
         <v-layout row wrap align-center>
           <v-flex xs12>
             <div class="white--text ml-3">
               Powered
-              by <a class="white--text" href="https://github.com/stefanprodan/k8s-podinfo" target="_blank">podinfo</a>
+              by <a class="white--text" href="https://github.com/stefanprodan/podinfo" target="_blank">podinfo</a>
               version ${ info.version } revision ${ info.revision }
+              Swagger <a class="white--text" href="swagger/">docs</a>
             </div>
           </v-flex>
         </v-layout>
@@ -125,18 +70,28 @@
     </v-content>
   </v-app>
  </div>
- <script src="https://unpkg.com/vue/dist/vue.min.js"></script>
- <script src="https://unpkg.com/vuetify/dist/vuetify.min.js"></script>
+
+ <script src="https://cdn.jsdelivr.net/npm/vue@2.x/dist/vue.js"></script>
+ <script src="https://cdn.jsdelivr.net/npm/vuetify@2.x/dist/vuetify.js"></script>
  <script>
    new Vue({
     delimiters: ['${', '}'],
     el: '#app',
+    vuetify: new Vuetify(),
     data: function() {
     return {
         info: {},
         timer: '',
         color: '',
-        pings: 0
+        pings: 0,
+        calls: 0,
+        tlName1: '',
+        tlColor1: 'grey',
+        tlName2: '',
+        tlColor2: 'grey',
+        cuddleStyle: {
+            backgroundColor: '#34577c'
+        },
     }
     },
     created: function() {
@@ -145,23 +100,36 @@
     },
     methods: {
         getInfo: function() {
-            var xhr = new XMLHttpRequest()
-            var self = this
-            xhr.open('GET', "api/info")
+          const xhr = new XMLHttpRequest();
+          let self = this;
+          xhr.open('GET', "api/info")
             xhr.onload = function () {
                 data = JSON.parse(xhr.responseText)
-                // reload page when the version changes
                 if (self.info.version) {
                     if (self.info.version != data.version) {
                         console.log("New version", data.version)
-                        //window.location.reload()
                     }
                 }
                 self.info = data
-                self.info.color = parseInt(data.version.split('.').reverse()[0], 10) === 0
-                  ? 'blue'
-                  : 'green'
+                self.info.color = data.color
+                self.cuddleStyle = {
+                    backgroundColor: data.color
+                }
+                self.info.logo = data.logo
                 document.title = data.hostname
+                let verColor = (parseInt(data.version.split('.').reverse()[0], 10)  % 2 === 0)
+                        ? 'blue'
+                        : 'green'
+                if ((self.calls % 2) === 0) {
+                  self.tlColor2 += ' lighten-2'
+                  self.tlColor1 = verColor
+                  self.tlName1 = data.version
+                } else {
+                  self.tlColor1 += ' lighten-2'
+                self.tlColor2 = verColor
+                self.tlName2 = data.version
+              }
+              self.calls++
             }
             xhr.onerror = function() {
                 console.log(xhr.responseText || 'Network request failed')

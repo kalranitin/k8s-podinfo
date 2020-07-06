@@ -3,9 +3,16 @@ package api
 import (
 	"net/http"
 
-	"github.com/stefanprodan/k8s-podinfo/pkg/version"
+	"github.com/stefanprodan/podinfo/pkg/version"
 )
 
+// Version godoc
+// @Summary Version
+// @Description returns podinfo version and git commit hash
+// @Tags HTTP API
+// @Produce json
+// @Router /version [get]
+// @Success 200 {object} api.MapResponse
 func (s *Server) versionHandler(w http.ResponseWriter, r *http.Request) {
 	result := map[string]string{
 		"version": version.VERSION,

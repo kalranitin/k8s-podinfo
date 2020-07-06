@@ -1,7 +1,7 @@
 builds:
   - main: ./cmd/podcli
     binary: podcli
-    ldflags: -s -w -X github.com/stefanprodan/k8s-podinfo/pkg/version.REVISION={{.Commit}}
+    ldflags: -s -w -X github.com/stefanprodan/podinfo/pkg/version.REVISION={{.Commit}}
     goos:
       - windows
       - darwin
@@ -10,12 +10,7 @@ builds:
       - amd64
     env:
       - CGO_ENABLED=0
-    ignore:
-      - goos: darwin
-        goarch: 386
-      - goos: windows
-        goarch: 386
-archive:
-  name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-  files:
-  - none*
+archives:
+  - name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - none*

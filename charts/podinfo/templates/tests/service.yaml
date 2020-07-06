@@ -9,10 +9,20 @@ metadata:
     app: {{ template "podinfo.name" . }}
   annotations:
     "helm.sh/hook": test-success
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    sidecar.istio.io/inject: "false"
+    linkerd.io/inject: disabled
+    appmesh.k8s.aws/sidecarInjectorWebhook: disabled
 spec:
   containers:
     - name: curl
-      image: radial/busyboxplus:curl
-      command: ['curl']
-      args:  ['{{ template "podinfo.fullname" . }}:{{ .Values.service.externalPort }}']
+      image: curlimages/curl:7.69.0
+      command:
+        - sh
+        - -c
+        - |
+          curl -s ${PODINFO_SVC}/api/info | grep version
+      env:
+        - name: PODINFO_SVC
+          value: "{{ template "podinfo.fullname" . }}.{{ .Release.Namespace }}:{{ .Values.service.externalPort }}"
   restartPolicy: Never

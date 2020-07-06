@@ -2,28 +2,33 @@ package main
 
 import (
 	"fmt"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
-	"github.com/stefanprodan/k8s-podinfo/pkg/api"
-	"github.com/stefanprodan/k8s-podinfo/pkg/signals"
-	"github.com/stefanprodan/k8s-podinfo/pkg/version"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
+	"github.com/stefanprodan/podinfo/pkg/api"
+	"github.com/stefanprodan/podinfo/pkg/grpc"
+	"github.com/stefanprodan/podinfo/pkg/signals"
+	"github.com/stefanprodan/podinfo/pkg/version"
 )
 
 func main() {
 	// flags definition
 	fs := pflag.NewFlagSet("default", pflag.ContinueOnError)
-	fs.Int("port", 9898, "port")
+	fs.Int("port", 9898, "HTTP port")
 	fs.Int("port-metrics", 0, "metrics port")
+	fs.Int("grpc-port", 0, "gRPC port")
+	fs.String("grpc-service-name", "podinfo", "gPRC service name")
 	fs.String("level", "info", "log level debug, info, warn, error, flat or panic")
-	fs.String("backend-url", "", "backend service URL")
+	fs.StringSlice("backend-url", []string{}, "backend service URL")
 	fs.Duration("http-client-timeout", 2*time.Minute, "client timeout duration")
 	fs.Duration("http-server-timeout", 30*time.Second, "server read and write timeout duration")
 	fs.Duration("http-server-shutdown-timeout", 5*time.Second, "server graceful shutdown timeout duration")
@@ -31,12 +36,20 @@ func main() {
 	fs.String("config-path", "", "config dir path")
 	fs.String("config", "config.yaml", "config file name")
 	fs.String("ui-path", "./ui", "UI local path")
-	fs.String("ui-color", "blue", "UI color")
+	fs.String("ui-logo", "", "UI logo")
+	fs.String("ui-color", "#34577c", "UI color")
 	fs.String("ui-message", fmt.Sprintf("greetings from podinfo v%v", version.VERSION), "UI message")
-	fs.Bool("random-delay", false, "between 0 and 5 seconds random delay")
+	fs.Bool("h2c", false, "allow upgrading to H2C")
+	fs.Bool("random-delay", false, "between 0 and 5 seconds random delay by default")
+	fs.String("random-delay-unit", "s", "either s(seconds) or ms(milliseconds")
+	fs.Int("random-delay-min", 0, "min for random delay: 0 by default")
+	fs.Int("random-delay-max", 5, "max for random delay: 5 by default")
 	fs.Bool("random-error", false, "1/3 chances of a random response error")
-	fs.Int("stress-cpu", 0, "Number of CPU cores with 100 load")
+	fs.Bool("unhealthy", false, "when set, healthy state is never reached")
+	fs.Bool("unready", false, "when set, ready state is never reached")
+	fs.Int("stress-cpu", 0, "number of CPU cores with 100 load")
 	fs.Int("stress-memory", 0, "MB of data to load into memory")
+	fs.String("cache-server", "", "Redis address in the format <host>:<port>")
 
 	versionFlag := fs.BoolP("version", "v", false, "get version number")
 
@@ -59,6 +72,7 @@ func main() {
 	viper.RegisterAlias("backendUrl", "backend-url")
 	hostname, _ := os.Hostname()
 	viper.SetDefault("jwt-secret", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
+	viper.SetDefault("ui-logo", "https://raw.githubusercontent.com/stefanprodan/podinfo/gh-pages/cuddle_clap.gif")
 	viper.Set("hostname", hostname)
 	viper.Set("version", version.VERSION)
 	viper.Set("revision", version.REVISION)
@@ -88,6 +102,32 @@ func main() {
 	if _, err := strconv.Atoi(viper.GetString("port")); err != nil {
 		port, _ := fs.GetInt("port")
 		viper.Set("port", strconv.Itoa(port))
+	}
+
+	// validate random delay options
+	if viper.GetInt("random-delay-max") < viper.GetInt("random-delay-min") {
+		logger.Panic("`--random-delay-max` should be greater than `--random-delay-min`")
+	}
+
+	switch delayUnit := viper.GetString("random-delay-unit"); delayUnit {
+	case
+		"s",
+		"ms":
+		break
+	default:
+		logger.Panic("`random-delay-unit` accepted values are: s|ms")
+	}
+
+	// load gRPC server config
+	var grpcCfg grpc.Config
+	if err := viper.Unmarshal(&grpcCfg); err != nil {
+		logger.Panic("config unmarshal failed", zap.Error(err))
+	}
+
+	// start gRPC server
+	if grpcCfg.Port > 0 {
+		grpcSrv, _ := grpc.NewServer(&grpcCfg, logger)
+		go grpcSrv.ListenAndServe()
 	}
 
 	// load HTTP server config

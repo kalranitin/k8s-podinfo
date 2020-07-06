@@ -3,18 +3,39 @@ package api
 import (
 	"context"
 	"fmt"
-	"github.com/gorilla/mux"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/spf13/viper"
-	"github.com/stefanprodan/k8s-podinfo/pkg/fscache"
-	"go.uber.org/zap"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/spf13/viper"
+	_ "github.com/stefanprodan/podinfo/pkg/api/docs"
+	"github.com/stefanprodan/podinfo/pkg/fscache"
+	httpSwagger "github.com/swaggo/http-swagger"
+	"github.com/swaggo/swag"
+	"go.uber.org/zap"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
+
+// @title Podinfo API
+// @version 2.0
+// @description Go microservice template for Kubernetes.
+
+// @contact.name Source Code
+// @contact.url https://github.com/stefanprodan/podinfo
+
+// @license.name MIT License
+// @license.url https://github.com/stefanprodan/podinfo/blob/master/LICENSE
+
+// @host localhost:9898
+// @BasePath /
+// @schemes http https
 
 var (
 	healthy int32
@@ -26,7 +47,8 @@ type Config struct {
 	HttpClientTimeout         time.Duration `mapstructure:"http-client-timeout"`
 	HttpServerTimeout         time.Duration `mapstructure:"http-server-timeout"`
 	HttpServerShutdownTimeout time.Duration `mapstructure:"http-server-shutdown-timeout"`
-	BackendURL                string        `mapstructure:"backend-url"`
+	BackendURL                []string      `mapstructure:"backend-url"`
+	UILogo                    string        `mapstructure:"ui-logo"`
 	UIMessage                 string        `mapstructure:"ui-message"`
 	UIColor                   string        `mapstructure:"ui-color"`
 	UIPath                    string        `mapstructure:"ui-path"`
@@ -35,15 +57,23 @@ type Config struct {
 	Port                      string        `mapstructure:"port"`
 	PortMetrics               int           `mapstructure:"port-metrics"`
 	Hostname                  string        `mapstructure:"hostname"`
+	H2C                       bool          `mapstructure:"h2c"`
 	RandomDelay               bool          `mapstructure:"random-delay"`
+	RandomDelayUnit           string        `mapstructure:"random-delay-unit"`
+	RandomDelayMin            int           `mapstructure:"random-delay-min"`
+	RandomDelayMax            int           `mapstructure:"random-delay-max"`
 	RandomError               bool          `mapstructure:"random-error"`
+	Unhealthy                 bool          `mapstructure:"unhealthy"`
+	Unready                   bool          `mapstructure:"unready"`
 	JWTSecret                 string        `mapstructure:"jwt-secret"`
+	CacheServer               string        `mapstructure:"cache-server"`
 }
 
 type Server struct {
 	router *mux.Router
 	logger *zap.Logger
 	config *Config
+	pool   *redis.Pool
 }
 
 func NewServer(config *Config, logger *zap.Logger) (*Server, error) {
@@ -72,14 +102,32 @@ func (s *Server) registerHandlers() {
 	s.router.HandleFunc("/readyz/disable", s.disableReadyHandler).Methods("POST")
 	s.router.HandleFunc("/panic", s.panicHandler).Methods("GET")
 	s.router.HandleFunc("/status/{code:[0-9]+}", s.statusHandler).Methods("GET", "POST", "PUT").Name("status")
-	s.router.HandleFunc("/store", s.storeWriteHandler).Methods("POST")
+	s.router.HandleFunc("/store", s.storeWriteHandler).Methods("POST", "PUT")
 	s.router.HandleFunc("/store/{hash}", s.storeReadHandler).Methods("GET").Name("store")
+	s.router.HandleFunc("/cache/{key}", s.cacheWriteHandler).Methods("POST", "PUT")
+	s.router.HandleFunc("/cache/{key}", s.cacheDeleteHandler).Methods("DELETE")
+	s.router.HandleFunc("/cache/{key}", s.cacheReadHandler).Methods("GET").Name("cache")
 	s.router.HandleFunc("/configs", s.configReadHandler).Methods("GET")
 	s.router.HandleFunc("/token", s.tokenGenerateHandler).Methods("POST")
 	s.router.HandleFunc("/token/validate", s.tokenValidateHandler).Methods("GET")
 	s.router.HandleFunc("/api/info", s.infoHandler).Methods("GET")
 	s.router.HandleFunc("/api/echo", s.echoHandler).Methods("POST")
 	s.router.HandleFunc("/ws/echo", s.echoWsHandler)
+	s.router.HandleFunc("/chunked", s.chunkedHandler)
+	s.router.HandleFunc("/chunked/{wait:[0-9]+}", s.chunkedHandler)
+	s.router.PathPrefix("/swagger/").Handler(httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
+	s.router.PathPrefix("/swagger/").Handler(httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
+	s.router.HandleFunc("/swagger.json", func(w http.ResponseWriter, r *http.Request) {
+		doc, err := swag.ReadDoc()
+		if err != nil {
+			s.logger.Error("swagger error", zap.Error(err), zap.String("path", "/swagger.json"))
+		}
+		w.Write([]byte(doc))
+	})
 }
 
 func (s *Server) registerMiddlewares() {
@@ -89,7 +137,8 @@ func (s *Server) registerMiddlewares() {
 	s.router.Use(httpLogger.Handler)
 	s.router.Use(versionMiddleware)
 	if s.config.RandomDelay {
-		s.router.Use(randomDelayMiddleware)
+		randomDelayer := NewRandomDelayMiddleware(s.config.RandomDelayMin, s.config.RandomDelayMax, s.config.RandomDelayUnit)
+		s.router.Use(randomDelayer.Handler)
 	}
 	if s.config.RandomError {
 		s.router.Use(randomErrorMiddleware)
@@ -102,12 +151,19 @@ func (s *Server) ListenAndServe(stopCh <-chan struct{}) {
 	s.registerHandlers()
 	s.registerMiddlewares()
 
+	var handler http.Handler
+	if s.config.H2C {
+		handler = h2c.NewHandler(s.router, &http2.Server{})
+	} else {
+		handler = s.router
+	}
+
 	srv := &http.Server{
 		Addr:         ":" + s.config.Port,
 		WriteTimeout: s.config.HttpServerTimeout,
 		ReadTimeout:  s.config.HttpServerTimeout,
 		IdleTimeout:  2 * s.config.HttpServerTimeout,
-		Handler:      s.router,
+		Handler:      handler,
 	}
 
 	//s.printRoutes()
@@ -123,6 +179,10 @@ func (s *Server) ListenAndServe(stopCh <-chan struct{}) {
 		}
 	}
 
+	// start redis connection pool
+	ticker := time.NewTicker(30 * time.Second)
+	s.startCachePool(ticker, stopCh)
+
 	// run server in background
 	go func() {
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
@@ -131,8 +191,12 @@ func (s *Server) ListenAndServe(stopCh <-chan struct{}) {
 	}()
 
 	// signal Kubernetes the server is ready to receive traffic
-	atomic.StoreInt32(&healthy, 1)
-	atomic.StoreInt32(&ready, 1)
+	if !s.config.Unhealthy {
+		atomic.StoreInt32(&healthy, 1)
+	}
+	if !s.config.Unready {
+		atomic.StoreInt32(&ready, 1)
+	}
 
 	// wait for SIGTERM or SIGINT
 	<-stopCh
@@ -142,6 +206,11 @@ func (s *Server) ListenAndServe(stopCh <-chan struct{}) {
 	// all calls to /healthz and /readyz will fail from now on
 	atomic.StoreInt32(&healthy, 0)
 	atomic.StoreInt32(&ready, 0)
+
+	// close cache pool
+	if s.pool != nil {
+		_ = s.pool.Close()
+	}
 
 	s.logger.Info("Shutting down HTTP server", zap.Duration("timeout", s.config.HttpServerShutdownTimeout))
 
@@ -203,3 +272,6 @@ func (s *Server) printRoutes() {
 		return nil
 	})
 }
+
+type ArrayResponse []string
+type MapResponse map[string]string
